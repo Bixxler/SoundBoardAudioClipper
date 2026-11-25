@@ -2,6 +2,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Microsoft.Win32;
 using Soundboard.Audio;
 using Soundboard.Setup;
@@ -15,7 +16,8 @@ public partial class MainWindow : Window
     private const string AppTitle = "Soundboard";
 
     private readonly AudioEngine _engine = new();
-    private readonly ClipRecorder _recorder = new();
+    private readonly AudioAppMonitor _appMonitor = new();
+    private readonly ClipRecorder _recorder;
     private bool _settingClipToggle;
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly ObservableCollection<SoundItem> _sounds;
@@ -24,6 +26,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        ClearShareFolder();
 
         _sounds = new ObservableCollection<SoundItem>(_settings.Sounds);
         _sounds.CollectionChanged += (_, _) => UpdateEmptyHint();
@@ -33,11 +36,11 @@ public partial class MainWindow : Window
         _engine.DeviceError += (_, message) => Dispatcher.BeginInvoke(() => ShowStatus(message));
         _engine.MicStatusChanged += (_, message) => Dispatcher.BeginInvoke(() => ShowStatus(message));
         StartMicMeter();
-        _recorder.StoppedUnexpectedly += (_, message) => Dispatcher.BeginInvoke(() =>
-        {
-            StopClipRecorder(message);
-            ShowStatus(message);
-        });
+        _recorder = new ClipRecorder(_appMonitor);
+        ClipApps.ItemsSource = _clipApps;
+        _appMonitor.Changed += (_, apps) => Dispatcher.BeginInvoke(() => UpdateClipApps(apps));
+        _recorder.SourcesChanged += (_, _) => Dispatcher.BeginInvoke(() => UpdateClipApps(_appMonitor.Current));
+        UpdateClipApps(_appMonitor.Current);
 
         MonitorVolume.Value = _settings.MonitorVolume;
         VirtualMicVolume.Value = _settings.VirtualMicVolume;
@@ -53,7 +56,6 @@ public partial class MainWindow : Window
         }
 
         LoadDevices();
-        LoadClipSources();
         LoadClipLengths();
         _loading = false;
     }
@@ -251,6 +253,158 @@ public partial class MainWindow : Window
         ShowStatus("Stopped");
     }
 
+    // ---- Export ----
+
+    /// <summary>Where named copies for dragging and the clipboard go. Cleared at startup.</summary>
+    private static readonly string ShareFolder = Path.Combine(Path.GetTempPath(), "Soundboard", "Share");
+
+    private Point? _padDragStart;
+    private bool _draggingPad;
+
+    private static SoundItem? SoundOf(object sender) => (sender as FrameworkElement)?.DataContext as SoundItem;
+
+    /// <summary>The sound's file, or null (with a status message) if it's gone.</summary>
+    private string? ExistingFile(SoundItem sound)
+    {
+        if (File.Exists(sound.Path)) return sound.Path;
+        ShowStatus($"Can't find the file for \"{sound.Name}\". It was at {sound.Path}.");
+        return null;
+    }
+
+    /// <summary>
+    /// A copy of the sound named after its pad, for dragging or pasting somewhere else, so the other app
+    /// gets "west side.mp3" rather than whatever the file happens to be called. The file itself is used
+    /// when its name already matches.
+    /// </summary>
+    private static string NamedCopy(SoundItem sound)
+    {
+        var name = FileNames.Safe(sound.Name, "Sound");
+        if (string.Equals(Path.GetFileNameWithoutExtension(sound.Path), name, StringComparison.OrdinalIgnoreCase))
+            return sound.Path;
+
+        // One folder per copy, so two pads with the same name don't overwrite each other's copy.
+        var folder = Path.Combine(ShareFolder, Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(folder);
+        var copy = Path.Combine(folder, name + Path.GetExtension(sound.Path));
+        File.Copy(sound.Path, copy);
+        return copy;
+    }
+
+    private static void ClearShareFolder()
+    {
+        try { if (Directory.Exists(ShareFolder)) Directory.Delete(ShareFolder, recursive: true); }
+        catch (Exception) { } // Something still has a copy open. It's a temp folder, so leave it.
+    }
+
+    private void ExportPad_Click(object sender, RoutedEventArgs e)
+    {
+        if (SoundOf(sender) is not { } sound || ExistingFile(sound) is not { } file) return;
+        var extension = Path.GetExtension(file);
+        var dialog = new SaveFileDialog
+        {
+            Title = $"Export \"{sound.Name}\"",
+            FileName = FileNames.Safe(sound.Name, "Sound") + extension,
+            DefaultExt = extension,
+            Filter = $"{extension.TrimStart('.').ToUpperInvariant()} file|*{extension}|All files|*.*",
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        try
+        {
+            if (!string.Equals(Path.GetFullPath(dialog.FileName), Path.GetFullPath(file), StringComparison.OrdinalIgnoreCase))
+                File.Copy(file, dialog.FileName, overwrite: true); // The dialog already asked about overwriting.
+            ShowStatus($"Exported \"{sound.Name}\" to {dialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Couldn't export \"{sound.Name}\": {ex.Message}");
+        }
+    }
+
+    private void ExportAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (_sounds.Count == 0)
+        {
+            ShowStatus("There are no sounds to export yet.");
+            return;
+        }
+        var dialog = new OpenFolderDialog { Title = "Export all sounds to a folder" };
+        if (dialog.ShowDialog(this) != true) return;
+
+        int exported = 0, missing = 0, failed = 0;
+        foreach (var sound in _sounds)
+        {
+            if (!File.Exists(sound.Path)) { missing++; continue; }
+            try
+            {
+                var target = FileNames.Unique(dialog.FolderName, FileNames.Safe(sound.Name, "Sound"), Path.GetExtension(sound.Path));
+                File.Copy(sound.Path, target);
+                exported++;
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"Export of {sound.Path} failed: {ex.Message}");
+                failed++;
+            }
+        }
+
+        var message = $"Exported {exported} sound{(exported == 1 ? "" : "s")} to {dialog.FolderName}.";
+        if (missing > 0) message += $" {missing} couldn't be found.";
+        if (failed > 0) message += $" {failed} couldn't be copied (see the log).";
+        ShowStatus(message);
+    }
+
+    private void CopyPadFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (SoundOf(sender) is not { } sound || ExistingFile(sound) is null) return;
+        try
+        {
+            Clipboard.SetFileDropList([NamedCopy(sound)]);
+            ShowStatus($"Copied \"{sound.Name}\". Paste it into a folder, a Discord message or another app.");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Couldn't copy \"{sound.Name}\": {ex.Message}");
+        }
+    }
+
+    private void ShowPadInExplorer_Click(object sender, RoutedEventArgs e)
+    {
+        if (SoundOf(sender) is not { } sound || ExistingFile(sound) is not { } file) return;
+        System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{file}\"")?.Dispose();
+    }
+
+    private void Pad_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => _padDragStart = e.GetPosition(this);
+
+    /// <summary>Dragging a pad drops its file into Explorer, Discord, a browser upload or any app that takes files.</summary>
+    private void Pad_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_padDragStart is not { } start || e.LeftButton != MouseButtonState.Pressed) return;
+        var moved = e.GetPosition(this) - start;
+        if (Math.Abs(moved.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(moved.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+        _padDragStart = null;
+        if (SoundOf(sender) is not { } sound || !File.Exists(sound.Path)) return;
+
+        string file;
+        try { file = NamedCopy(sound); }
+        catch (Exception ex) { ShowStatus($"Couldn't drag \"{sound.Name}\": {ex.Message}"); return; }
+
+        // Letting go of the button's mouse capture means the drag doesn't also count as a click that plays it.
+        ((UIElement)sender).ReleaseMouseCapture();
+        _draggingPad = true;
+        try
+        {
+            var result = DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(DataFormats.FileDrop, new[] { file }),
+                DragDropEffects.Copy);
+            if (result != DragDropEffects.None) ShowStatus($"Copied \"{sound.Name}\".");
+        }
+        finally
+        {
+            _draggingPad = false;
+        }
+    }
+
     private void RemovePad_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not SoundItem sound) return;
@@ -324,13 +478,14 @@ public partial class MainWindow : Window
 
     private void Window_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+        // A pad dragged onto this window would just add itself again.
+        e.Effects = !_draggingPad && e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
     private void Window_Drop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetData(DataFormats.FileDrop) is string[] files) AddFiles(files);
+        if (!_draggingPad && e.Data.GetData(DataFormats.FileDrop) is string[] files) AddFiles(files);
     }
 
     private void AddFiles(IEnumerable<string> files)
@@ -349,30 +504,83 @@ public partial class MainWindow : Window
 
     // ---- Clip recorder ----
 
-    private bool _loadingClipSources;
+    private readonly ObservableCollection<ClipAppRow> _clipApps = [];
 
-    /// <summary>
-    /// Fills the "Record from" list with the apps that have open windows. Discord is added even when it's
-    /// only in the tray. Keeps the current choice, or picks the saved app, or Discord.
-    /// </summary>
-    private void LoadClipSources()
+    /// <summary>Called on the UI thread with the monitor's latest list. Updates rows in place, so ticks don't flicker.</summary>
+    private void UpdateClipApps(IReadOnlyList<AudioApp> apps)
     {
-        var current = ClipSource.SelectedItem as AudioSource;
-        var sources = AudioSource.ListWindows();
-        if (!sources.Any(s => s.IsDiscord) && AudioSource.FindDiscord() is { } discord)
-            sources.Add(discord with { WindowTitle = "Discord (in the tray)" });
+        var excluded = new HashSet<string>(_settings.ClipExcludedApps, StringComparer.OrdinalIgnoreCase);
+        var capturing = _recorder.CapturedApps.Select(a => a.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var displayNames = apps.ToDictionary(a => a.Name, a => a.DisplayName, StringComparer.OrdinalIgnoreCase);
 
-        var wanted = current?.ProcessName ?? _settings.ClipSourceProcessName;
-        var selected =
-            (current is null ? null : sources.FirstOrDefault(s => s.ProcessId == current.ProcessId)) ??
-            (wanted is null ? null : sources.FirstOrDefault(s => string.Equals(s.ProcessName, wanted, StringComparison.OrdinalIgnoreCase))) ??
-            sources.FirstOrDefault(s => s.IsDiscord);
+        foreach (var row in _clipApps.Where(r => !displayNames.ContainsKey(r.Name)).ToList())
+        {
+            row.PropertyChanged -= ClipAppRow_Changed;
+            _clipApps.Remove(row);
+        }
 
-        _loadingClipSources = true;
-        ClipSource.ItemsSource = sources;
-        ClipSource.SelectedItem = selected;
-        _loadingClipSources = false;
+        for (var i = 0; i < apps.Count; i++)
+        {
+            var app = apps[i];
+            var row = _clipApps.FirstOrDefault(r => r.Name.Equals(app.Name, StringComparison.OrdinalIgnoreCase));
+            if (row is null)
+            {
+                row = new ClipAppRow { Name = app.Name, IsIncluded = !excluded.Contains(app.Name) };
+                row.PropertyChanged += ClipAppRow_Changed;
+                _clipApps.Insert(Math.Min(i, _clipApps.Count), row);
+            }
+            else if (_clipApps.IndexOf(row) is var at && at != i && i < _clipApps.Count)
+            {
+                _clipApps.Move(at, i);
+            }
+
+            row.DisplayName = app.DisplayName;
+            row.IsActive = app.IsActive;
+            row.IsCapturing = capturing.Contains(app.Name);
+
+            // A process tree capture includes child processes, so an app started by a ticked app can't be left out.
+            var host = app.Roots.Select(r => r.InsideApp).FirstOrDefault(outer => outer is not null && !excluded.Contains(outer));
+            row.Note = row.IsIncluded || host is null
+                ? ""
+                : $"Still recorded: {(displayNames.TryGetValue(host, out var hostName) ? hostName : host)} started it";
+        }
+
+        ClipAppsEmpty.Visibility = _clipApps.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (_recorder.IsRecording) UpdateRecordingStatus();
     }
+
+    private void ClipAppRow_Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(ClipAppRow.IsIncluded) || sender is not ClipAppRow row) return;
+
+        var excluded = _settings.ClipExcludedApps;
+        excluded.RemoveAll(n => n.Equals(row.Name, StringComparison.OrdinalIgnoreCase));
+        if (!row.IsIncluded) excluded.Add(row.Name);
+        Save();
+
+        _recorder.SetExcluded(excluded);
+        UpdateClipApps(_appMonitor.Current); // Refresh the "still recorded" notes.
+    }
+
+    private void UpdateRecordingStatus()
+    {
+        var apps = _recorder.CapturedApps;
+        var kept = $"the last {ClipRecorder.Format(_recorder.BufferLength)} are kept in memory.";
+        ClipStatus.Text = apps.Count == 0
+            ? "Recording, but no ticked app has audio open yet. They're picked up as soon as they do."
+            : $"Recording {JoinNames(apps.Select(a => a.DisplayName).ToList())}: {kept}" +
+              (apps.Any(a => a.IsDiscord) ? " Let the call know." : "");
+    }
+
+    /// <summary>"Discord", "Discord and Spotify", "Discord, Spotify and 2 more".</summary>
+    private static string JoinNames(IReadOnlyList<string> names) => names.Count switch
+    {
+        0 => "nothing",
+        1 => names[0],
+        2 => $"{names[0]} and {names[1]}",
+        3 => $"{names[0]}, {names[1]} and {names[2]}",
+        _ => $"{names[0]}, {names[1]} and {names.Count - 2} more",
+    };
 
     private void LoadClipLengths()
     {
@@ -409,39 +617,21 @@ public partial class MainWindow : Window
     private void UpdateClipLengthText()
     {
         var length = _recorder.IsRecording ? _recorder.BufferLength : SelectedClipLength;
-        SaveClipButton.Content = $"✂  Clip last {ClipRecorder.Format(length)}…";
-    }
-
-    private void ClipSource_DropDownOpened(object? sender, EventArgs e) => LoadClipSources();
-
-    private void RefreshClipSources_Click(object sender, RoutedEventArgs e) => LoadClipSources();
-
-    private void ClipSource_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (_loadingClipSources || ClipSource.SelectedItem is not AudioSource source) return;
-        _settings.ClipSourceProcessName = source.ProcessName;
-        Save();
+        SaveClipText.Text = $"Clip {ClipRecorder.Format(length)}…";
     }
 
     private async void ClipToggle_Checked(object sender, RoutedEventArgs e)
     {
         if (_settingClipToggle) return;
 
-        if (ClipSource.SelectedItem is not AudioSource source)
-        {
-            SetClipToggle(false);
-            ClipStatus.Text = "Pick a window to record from first. If Discord isn't listed, open the Discord desktop app.";
-            return;
-        }
-
         if (!_settings.ClipConsentAcknowledged)
         {
             var ok = MessageBox.Show(this,
-                "The clip recorder keeps the last few seconds or minutes of the chosen app's audio, which can include other people's voices.\n\n" +
+                "The clip recorder keeps the last few seconds or minutes of the ticked apps' audio, which can include other people's voices.\n\n" +
                 "• Tell people in the call when it's on, and only clip people who agree. Recording people without consent " +
                 "breaks Discord's rules and is illegal in many places.\n" +
                 "• Audio stays in memory and is only saved when you save a clip.\n" +
-                "• Only the app you pick is captured: no other apps, and not your own mic.\n\nTurn it on?",
+                "• Only the apps you leave ticked are captured, and never your own mic.\n\nTurn it on?",
                 "Clip recorder", MessageBoxButton.OKCancel, MessageBoxImage.Information);
             if (ok != MessageBoxResult.OK)
             {
@@ -453,15 +643,13 @@ public partial class MainWindow : Window
         }
 
         ClipToggle.IsEnabled = false;
-        SetClipSourceEnabled(false);
-        ClipStatus.Text = $"Connecting to {source.AppName}…";
+        ClipLength.IsEnabled = false;
+        ClipStatus.Text = "Starting…";
         try
         {
-            var length = SelectedClipLength;
-            await _recorder.StartAsync(source, length);
-            ClipToggle.Content = "Clip recorder: On";
-            var kept = $"the last {ClipRecorder.Format(length)} are kept in memory.";
-            ClipStatus.Text = source.IsDiscord ? $"Recording Discord: {kept} Let the call know." : $"Recording {source.AppName}: {kept}";
+            await _recorder.StartAsync(SelectedClipLength, _settings.ClipExcludedApps);
+            ClipToggleText.Text = "Stop recording";
+            UpdateRecordingStatus();
             UpdateClipLengthText();
             RecDot.Visibility = Visibility.Visible;
             SaveClipButton.IsEnabled = true;
@@ -480,28 +668,20 @@ public partial class MainWindow : Window
     private void ClipToggle_Unchecked(object sender, RoutedEventArgs e)
     {
         if (_settingClipToggle) return;
-        StopClipRecorder("Off. Buffered audio was discarded.");
+        StopClipRecorder("Stopped. The buffered audio was discarded.");
     }
 
     private void StopClipRecorder(string message)
     {
         _recorder.Stop();
         SetClipToggle(false);
-        SetClipSourceEnabled(true);
+        ClipLength.IsEnabled = true;
         UpdateClipLengthText();
-        ClipToggle.Content = "Clip recorder: Off";
+        ClipToggleText.Text = "Start recording";
         ClipStatus.Text = message;
         RecDot.Visibility = Visibility.Collapsed;
         SaveClipButton.IsEnabled = false;
         Title = AppTitle;
-    }
-
-    /// <summary>The source can't change while recording: the buffer holds one app's audio.</summary>
-    private void SetClipSourceEnabled(bool enabled)
-    {
-        ClipSource.IsEnabled = enabled;
-        RefreshClipSourcesButton.IsEnabled = enabled;
-        ClipLength.IsEnabled = enabled;
     }
 
     private void SetClipToggle(bool on)
@@ -513,7 +693,7 @@ public partial class MainWindow : Window
 
     private void SaveClip_Click(object sender, RoutedEventArgs e)
     {
-        var appName = _recorder.Source?.AppName ?? "the app's";
+        var appName = _recorder.CapturedApps is { Count: > 0 } apps ? JoinNames(apps.Select(a => a.DisplayName).ToList()) : "recorded";
         var length = ClipRecorder.Format(_recorder.BufferLength);
         var samples = _recorder.Snapshot();
         if (samples.Length == 0)
@@ -549,6 +729,7 @@ public partial class MainWindow : Window
     {
         Save();
         _recorder.Dispose();
+        _appMonitor.Dispose();
         _engine.Dispose();
     }
 }

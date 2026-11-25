@@ -116,7 +116,7 @@ public partial class ClipEditorWindow : Window
         {
             Title = "Save clip",
             Filter = "MP3 audio|*.mp3",
-            FileName = SafeFileName(ClipName.Text) + ".mp3",
+            FileName = FileNames.Safe(ClipName.Text) + ".mp3",
         };
         if (dialog.ShowDialog(this) != true) return;
         if (TrySave(dialog.FileName))
@@ -128,7 +128,7 @@ public partial class ClipEditorWindow : Window
         if (!HasSelection()) return;
         Directory.CreateDirectory(AppSettings.ClipsFolder);
         var name = string.IsNullOrWhiteSpace(ClipName.Text) ? "Clip" : ClipName.Text.Trim();
-        var path = UniquePath(AppSettings.ClipsFolder, SafeFileName(name), ".mp3");
+        var path = FileNames.Unique(AppSettings.ClipsFolder, FileNames.Safe(name), ".mp3");
         if (!TrySave(path)) return;
         StopPreview();
         _onSave(name, path);
@@ -147,20 +147,6 @@ public partial class ClipEditorWindow : Window
             MessageBox.Show(this, $"Couldn't save the clip:\n{ex.Message}", Title, MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
-    }
-
-    private static string SafeFileName(string name)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var cleaned = new string(name.Trim().Select(c => invalid.Contains(c) ? '_' : c).ToArray());
-        return string.IsNullOrWhiteSpace(cleaned) ? "Clip" : cleaned;
-    }
-
-    private static string UniquePath(string folder, string baseName, string extension)
-    {
-        var path = Path.Combine(folder, baseName + extension);
-        for (var i = 2; File.Exists(path); i++) path = Path.Combine(folder, $"{baseName} ({i}){extension}");
-        return path;
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

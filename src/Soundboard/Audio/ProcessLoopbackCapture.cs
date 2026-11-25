@@ -31,8 +31,12 @@ internal sealed class ProcessLoopbackCapture : IDisposable
     /// <summary>Raised on the capture thread if capture fails.</summary>
     public event Action<Exception>? Failed;
 
-    private ProcessLoopbackCapture(AudioClient client)
+    /// <summary>The root of the process tree being captured.</summary>
+    public int ProcessId { get; }
+
+    private ProcessLoopbackCapture(AudioClient client, int processId)
     {
+        ProcessId = processId;
         _client = client;
         _client.Initialize(
             AudioClientShareMode.Shared,
@@ -49,7 +53,7 @@ internal sealed class ProcessLoopbackCapture : IDisposable
     {
         var client = await ActivateAsync(processId);
         // The client was created on a worker (MTA) thread. Initialize it on one too, not the UI thread.
-        try { return await Task.Run(() => new ProcessLoopbackCapture(client)); }
+        try { return await Task.Run(() => new ProcessLoopbackCapture(client, processId)); }
         catch { client.Dispose(); throw; }
     }
 

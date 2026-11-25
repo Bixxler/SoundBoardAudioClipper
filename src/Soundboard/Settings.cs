@@ -43,8 +43,11 @@ public sealed class AppSettings
     public bool FirstRun { get; set; } = true;
     public bool ClipConsentAcknowledged { get; set; }
 
-    /// <summary>The exe name (without .exe) of the app the clip recorder last captured. Null means Discord.</summary>
-    public string? ClipSourceProcessName { get; set; }
+    /// <summary>
+    /// Exe names (without .exe) the clip recorder leaves out. Every other app with audio is recorded.
+    /// Soundboard itself is left out by default, so clips don't pick up your own pads.
+    /// </summary>
+    public List<string> ClipExcludedApps { get; set; } = ["Soundboard"];
 
     /// <summary>How many seconds of audio the clip recorder keeps. Should be one of <c>ClipRecorder.BufferLengths</c>.</summary>
     public int ClipBufferSeconds { get; set; } = 30;
