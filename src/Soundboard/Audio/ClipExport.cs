@@ -1,0 +1,62 @@
+using NAudio.MediaFoundation;
+using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
+
+namespace Soundboard.Audio;
+
+public static class ClipExport
+{
+    private static readonly Lazy<bool> MediaFoundation = new(() => { MediaFoundationApi.Startup(); return true; });
+
+    /// <summary>Decodes a whole audio file into memory so it can be trimmed. Rejects very long files.</summary>
+    public static (float[] Samples, int SampleRate, int Channels) Load(string path, TimeSpan maxLength)
+    {
+        using var reader = new AudioFileReader(path);
+        if (reader.TotalTime > maxLength)
+            throw new InvalidOperationException(
+                $"It's {reader.TotalTime:m\\:ss} long. Trimming works on files up to {maxLength.TotalMinutes:0} minutes.");
+
+        var format = reader.WaveFormat;
+        var samples = new List<float>((int)Math.Min(reader.Length / 4, int.MaxValue));
+        var buffer = new float[format.SampleRate * format.Channels];
+        int read;
+        while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+            samples.AddRange(buffer.AsSpan(0, read));
+        return (samples.ToArray(), format.SampleRate, format.Channels);
+    }
+
+    /// <summary>A playable source for part of an interleaved buffer.</summary>
+    public static ISampleProvider Segment(float[] samples, int sampleRate, int channels, double startSeconds, double endSeconds)
+    {
+        var totalFrames = samples.Length / channels;
+        var first = Math.Clamp((int)(startSeconds * sampleRate), 0, totalFrames);
+        var last = Math.Clamp((int)(endSeconds * sampleRate), first, totalFrames);
+        return new ArraySampleProvider(samples, first * channels, (last - first) * channels,
+            WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));
+    }
+
+    /// <summary>
+    /// Writes an MP3 file with Windows' built-in encoder. At 128 kbps, a 5-second clip is about
+    /// 80 KB, well inside Discord's 512 KB soundboard limit.
+    /// </summary>
+    public static void SaveMp3(ISampleProvider clip, string path)
+    {
+        _ = MediaFoundation.Value;
+        MediaFoundationEncoder.EncodeToMp3(new SampleToWaveProvider16(clip), path, 128_000);
+    }
+
+    private sealed class ArraySampleProvider(float[] data, int offset, int count, WaveFormat format) : ISampleProvider
+    {
+        private int _position;
+        public WaveFormat WaveFormat { get; } = format;
+
+        public int Read(float[] buffer, int bufferOffset, int wanted)
+        {
+            var n = Math.Min(wanted, count - _position);
+            if (n <= 0) return 0;
+            Array.Copy(data, offset + _position, buffer, bufferOffset, n);
+            _position += n;
+            return n;
+        }
+    }
+}

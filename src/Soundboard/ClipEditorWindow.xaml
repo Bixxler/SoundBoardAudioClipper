@@ -1,0 +1,51 @@
+<Window x:Class="Soundboard.ClipEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Soundboard"
+        Title="Make a clip" Width="820" Height="380" MinWidth="560" MinHeight="340"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="#1E1F24" Foreground="#E8E8EC" FontFamily="Segoe UI" FontSize="13"
+        Closed="Window_Closed">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel Margin="16">
+        <TextBlock x:Name="Description" DockPanel.Dock="Top" Foreground="#A6A8B3" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <Button Content="▶  Play selection" Click="Play_Click" />
+                <Button Content="■  Stop" Click="Stop_Click" />
+                <Button Content="Select last 4 s" Click="SelectLast_Click" />
+                <Button Content="Select all" Click="SelectAll_Click" />
+            </StackPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Name" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="#A6A8B3" />
+                <TextBox x:Name="ClipName" Grid.Column="1" Padding="6,4" MaxLength="64" Margin="0,0,12,0" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button x:Name="PrimaryButton" Click="Primary_Click" />
+                    <Button Content="Save MP3…" Click="SaveMp3_Click" />
+                    <Button Content="Close" Click="Close_Click" Margin="0" />
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <TextBlock x:Name="SelectionText" FontWeight="SemiBold" />
+            <TextBlock x:Name="FitText" Foreground="#A6A8B3" Margin="0,2,0,0" />
+        </StackPanel>
+
+        <Border BorderBrush="#33343B" BorderThickness="1" CornerRadius="4">
+            <local:WaveformView x:Name="Waveform" MinHeight="120" />
+        </Border>
+    </DockPanel>
+</Window>
