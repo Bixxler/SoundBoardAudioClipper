@@ -79,6 +79,20 @@ Requirements: Windows 10 version 2004 or later. To record only Discord, use the 
 tab in a browser is recorded together with everything else that browser plays. Turning the recorder off throws away
 the buffered audio.
 
+## Portable download
+
+The release zip (`Soundboard-<version>-win-x64.zip`) has one self-contained `Soundboard.exe` that runs without .NET
+installed. Unzip it anywhere and run it. Settings and clips still live in `%APPDATA%\Soundboard`, so moving or
+replacing the exe keeps them.
+
+To build the zip:
+
+```
+powershell -ExecutionPolicy Bypass -File tools\package.ps1
+```
+
+It reads the version from `<Version>` in `src/Soundboard/Soundboard.csproj` and writes the zip to `artifacts\`.
+
 ## Install with a desktop shortcut
 
 ```
