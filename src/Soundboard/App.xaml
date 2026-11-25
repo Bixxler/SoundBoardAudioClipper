@@ -44,6 +44,7 @@
 
         <local:PadColorConverter x:Key="PadColor" />
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <local:SubtractConverter x:Key="Subtract" />
 
         <!-- Record toggle: neutral when off, red while recording. Its own template, because the Fluent
              toggle's template paints the checked state with the accent colour. -->

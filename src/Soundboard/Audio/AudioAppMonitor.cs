@@ -116,7 +116,7 @@ public sealed class AudioAppMonitor : IDisposable
         }
 
         var rootIds = roots.Keys.ToHashSet();
-        return roots
+        var apps = roots
             .GroupBy(r => r.Value.Name, StringComparer.OrdinalIgnoreCase)
             .Select(g => new AudioApp(
                 g.Key,
@@ -125,6 +125,14 @@ public sealed class AudioAppMonitor : IDisposable
                         tree.FindAncestorIn(r.Key, rootIds) is { } outer ? roots[outer].Name : null))
                     .OrderBy(r => r.ProcessId).ToList(),
                 g.Any(r => r.Value.Active)))
+            .ToList();
+
+        // Different apps can share a description (e.g. two builds of one program). Add the exe name so
+        // the rows can be told apart.
+        var shared = apps.GroupBy(a => a.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.CurrentCultureIgnoreCase);
+        return apps
+            .Select(a => shared.Contains(a.DisplayName) ? a with { DisplayName = $"{a.DisplayName} ({a.Name})" } : a)
             .OrderBy(a => a.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
     }

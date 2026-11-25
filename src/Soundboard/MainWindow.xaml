@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Soundboard"
-        Title="Soundboard" Height="760" Width="1060" MinWidth="780" MinHeight="560"
+        Title="Soundboard" Height="860" Width="1060" MinWidth="780" MinHeight="560"
         FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
         AllowDrop="True" Drop="Window_Drop" DragOver="Window_DragOver"
         Closing="Window_Closing">
@@ -17,8 +17,14 @@
         </Grid.RowDefinitions>
 
         <!-- ================= Sidebar: routing and clip recorder ================= -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Margin="16,16,12,16">
+        <ScrollViewer x:Name="SidebarScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <!-- Fills the visible height, so the app list can grow into it. Below MinHeight, the sidebar scrolls instead. -->
+            <Grid Margin="16,16,12,16" MinHeight="700"
+                  Height="{Binding ViewportHeight, ElementName=SidebarScroll, Converter={StaticResource Subtract}, ConverterParameter=32}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
 
                 <!-- Audio routing -->
                 <Border Style="{StaticResource Card}">
@@ -76,9 +82,18 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Clip recorder -->
-                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
-                    <StackPanel>
+                <!-- Clip recorder: the app list takes whatever height is left and scrolls; the buttons stay in view. -->
+                <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,12,0,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" MinHeight="72" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
                         <DockPanel>
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                                 <Ellipse x:Name="RecDot" Width="8" Height="8" Fill="#E5484D" Margin="0,0,6,0"
@@ -87,13 +102,13 @@
                             <TextBlock Style="{StaticResource SectionTitle}" Text="Clip recorder" />
                         </DockPanel>
 
-                        <TextBlock Style="{StaticResource FieldLabel}" Text="Apps to record" />
-                        <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="6"
-                                Background="{DynamicResource ControlFillColorSecondaryBrush}">
+                        <TextBlock Grid.Row="1" Style="{StaticResource FieldLabel}" Text="Apps to record" />
+                        <Border Grid.Row="2" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                CornerRadius="6" Background="{DynamicResource ControlFillColorSecondaryBrush}">
                             <Grid>
                                 <TextBlock x:Name="ClipAppsEmpty" Style="{StaticResource Hint}" Margin="12,10"
                                            Text="No apps have audio open yet. They appear here as soon as they do." />
-                                <ScrollViewer MaxHeight="172" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                     <ItemsControl x:Name="ClipApps" Margin="10,4" Focusable="False">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate DataType="{x:Type local:ClipAppRow}">
@@ -102,7 +117,7 @@
                                                              VerticalAlignment="Center" Fill="#3FB950"
                                                              Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}"
                                                              ToolTip="Has audio open right now" />
-                                                    <CheckBox IsChecked="{Binding IsIncluded, Mode=TwoWay}" MinHeight="30" Padding="6,0,0,0"
+                                                    <CheckBox IsChecked="{Binding IsIncluded, Mode=TwoWay}" MinHeight="32" Padding="8,0,0,0" VerticalContentAlignment="Center"
                                                               ToolTip="Untick to leave this app out of clips">
                                                         <StackPanel>
                                                             <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
@@ -117,16 +132,16 @@
                                 </ScrollViewer>
                             </Grid>
                         </Border>
-                        <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"
+                        <TextBlock Grid.Row="3" Style="{StaticResource Hint}" Margin="0,6,0,0"
                                    Text="Apps that open audio later are added ticked." />
 
-                        <DockPanel Margin="0,12,0,0">
+                        <DockPanel Grid.Row="4" Margin="0,12,0,0">
                             <ComboBox x:Name="ClipLength" DockPanel.Dock="Right" Width="170" SelectionChanged="ClipLength_Changed"
                                       ToolTip="How much audio is kept in memory. Applies the next time the recorder turns on." />
                             <TextBlock Text="Keep last" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                         </DockPanel>
 
-                        <Grid Margin="0,16,0,0">
+                        <Grid Grid.Row="5" Margin="0,16,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="8" />
@@ -149,11 +164,11 @@
                             </Button>
                         </Grid>
 
-                        <TextBlock x:Name="ClipStatus" Style="{StaticResource Hint}" Margin="0,10,0,0"
+                        <TextBlock x:Name="ClipStatus" Grid.Row="6" Style="{StaticResource Hint}" Margin="0,10,0,0"
                                    Text="Start recording to keep the ticked apps' recent audio for clips." />
-                    </StackPanel>
+                    </Grid>
                 </Border>
-            </StackPanel>
+            </Grid>
         </ScrollViewer>
 
         <!-- ================= Main: sound pads ================= -->
