@@ -49,8 +49,8 @@ internal sealed class OutputBus : IDisposable
 
     public void Play(string path)
     {
-        var reader = new AudioFileReader(path);
-        Play(reader, owner: reader);
+        var audio = AudioFiles.Open(path);
+        Play(audio.Samples, owner: audio);
     }
 
     /// <summary>Plays a source. Disposing the returned handle stops it early.</summary>

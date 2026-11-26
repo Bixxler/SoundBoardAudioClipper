@@ -40,10 +40,12 @@ The two volume sliders are separate: one sets what you hear, the other what othe
 - Click a pad to play it. Sounds can overlap. **Stop all** stops every sound but not your mic.
 - Right-click a pad to:
   - **Rename…** it;
-  - **Trim…** it: drag across the waveform to keep only part of it, preview it, and optionally rename it. Trimming
-    never changes your own files: the trimmed version is saved as a new MP3 in `%APPDATA%\Soundboard\Clips` and the
-    pad switches to it. For clips the app made itself, the old version is replaced. Files up to 10 minutes long can be
-    trimmed;
+  - **Edit…** it: trim it, reverse it or add effects (see [Editing clips](#editing-clips)), and optionally rename it.
+    Editing never changes your own files: the edited version is saved as a new MP3 in `%APPDATA%\Soundboard\Clips`
+    and the pad switches to it. For clips the app made itself, the old version is replaced. Files up to 10 minutes
+    long can be edited;
+  - **Make reversed copy**: adds a backwards version as a new pad next to it, saved in `%APPDATA%\Soundboard\Clips`.
+    The original isn't changed;
   - **Remove** it.
 - To get a sound out of the app, for example to post a clip in Discord or keep a copy elsewhere:
   - **drag a pad** into File Explorer, a Discord message, a browser upload or any app that accepts files;
@@ -74,13 +76,34 @@ Settings and the sound list are saved to `%APPDATA%\Soundboard\settings.json`. S
 3. Click **Start recording**. The ticked apps' audio is mixed into one track and kept in memory. Your own mic is
    never captured. The button turns red, and "● REC" shows in the title bar.
 4. When something clip-worthy happens, click **Clip 30 s…** (the button shows the length you chose).
-5. Drag across the waveform to select the moment, and click **▶ Play selection** to check it. The preview plays only
-   on your own output, so the call doesn't hear it.
+5. Drag across the waveform to select the moment, and click **▶ Play selection** to check it. You can also reverse
+   it or add effects (see [Editing clips](#editing-clips)). The preview plays only on your own output, so the call
+   doesn't hear it.
 6. Name it, then either:
    - **Add to soundboard**: saves an MP3 to `%APPDATA%\Soundboard\Clips` and adds it as a pad; or
    - **Save MP3…**: save it anywhere, for example to submit to the vote bot with `/sound submit`.
 
 The editor tells you whether the selection fits the vote bot (4 s by default) and Discord's soundboard (5.2 s).
+
+### Editing clips
+
+The clip editor opens for new clips and when you choose **Edit…** on a pad.
+
+- **Reverse** plays the clip backwards. Click it again to undo. The selection follows, so it still covers the same
+  moment.
+- **Effects** (the panel on the right) change the selected part when you preview or save it:
+
+  | Effect | What it does |
+  |---|---|
+  | Volume | −12 to +12 dB. Loud results are turned down just enough not to clip. |
+  | Bass boost | Up to +18 dB below about 120 Hz. |
+  | Pitch | −12 to +12 semitones, like a tape: higher is also faster and shorter, lower is slower and longer. |
+  | Reverb | Room echo. Adds a 1.5 s tail to the end. |
+  | Echo | Repeats that fade out. Adds a 1.2 s tail to the end. |
+  | Distortion | Crunchy, overdriven sound. |
+
+  **Reset** turns them all off. Pitch, reverb and echo change the clip's length; the editor shows the length with
+  effects, and checks *that* against Discord's 5.2 s soundboard limit.
 
 **Consent:** clips contain other people's voices. Tell people in the call when the recorder is on, and only clip
 people who agree. Recording people without consent breaks Discord's rules and is illegal in many places.
@@ -131,7 +154,8 @@ dotnet run --project src/Soundboard
 | `Audio/ProcessTree.cs` | Process parent/exe snapshot: finds each app's root process and which app started which |
 | `Audio/ClipRecorder.cs` | One capture per ticked app, started and stopped as apps come and go |
 | `Audio/MixBuffer.cs` | Ring buffer that mixes the captures on one shared timeline (30 s to 2 min) |
-| `Audio/ClipExport.cs` | Cuts a selection and encodes it to MP3 (Windows Media Foundation) |
+| `Audio/ClipExport.cs` | Cuts a selection, reverses it, and encodes it to MP3 (Windows Media Foundation) |
+| `Audio/Effects.cs` | Volume, bass boost, pitch, reverb, echo and distortion, applied to a whole clip at once |
 | `ClipEditorWindow.xaml(.cs)`, `WaveformView.cs` | Waveform, drag to select, preview, save |
 | `Setup/VbCableInstaller.cs` | Downloads, extracts and runs the VB-Cable installer |
 | `Setup/Authenticode.cs` | Verifies the installer's signature with WinVerifyTrust |

@@ -39,6 +39,7 @@ public sealed class ClipRecorder : IDisposable
     private readonly SemaphoreSlim _reconcile = new(1, 1);
     private readonly Dictionary<int, Source> _sources = new();
     private readonly HashSet<int> _failed = new(); // Roots that couldn't be captured; not retried every poll.
+    private readonly Dictionary<string, AudioApp> _recorded = new(StringComparer.OrdinalIgnoreCase); // Every app captured since start.
     private HashSet<string> _excluded = new(StringComparer.OrdinalIgnoreCase);
     private MixBuffer? _buffer;
     private Stopwatch _clock = new();
@@ -60,6 +61,15 @@ public sealed class ClipRecorder : IDisposable
     /// <summary>How much audio is kept while recording.</summary>
     public TimeSpan BufferLength { get; private set; } = DefaultBufferLength;
 
+    /// <summary>
+    /// Every app captured since recording started, including ones that have since closed. Used to
+    /// describe what's in a clip.
+    /// </summary>
+    public IReadOnlyList<AudioApp> RecordedApps
+    {
+        get { lock (_gate) return [.. _recorded.Values]; }
+    }
+
     /// <summary>The apps being captured right now, by display name.</summary>
     public IReadOnlyList<AudioApp> CapturedApps
     {
@@ -78,6 +88,7 @@ public sealed class ClipRecorder : IDisposable
             _buffer = new MixBuffer(SampleRate, Channels, bufferLength);
             _clock = Stopwatch.StartNew();
             _failed.Clear();
+            _recorded.Clear();
             _session++;
             BufferLength = bufferLength;
         }
@@ -176,6 +187,7 @@ public sealed class ClipRecorder : IDisposable
                     }
                     added = new Source(app, capture, (long)(_clock.Elapsed.TotalSeconds * SampleRate));
                     _sources[pid] = added;
+                    _recorded[app.Name] = app;
                 }
                 capture.DataAvailable += (samples, count) =>
                 {

@@ -6,7 +6,7 @@ using Soundboard.Audio;
 
 namespace Soundboard;
 
-/// <summary>How the clip editor is set up: for a new recorded clip, or for trimming an existing pad.</summary>
+/// <summary>How the clip editor is set up: for a new recorded clip, or for editing an existing pad.</summary>
 public sealed record ClipEditorOptions(string Title, string Description, string InitialName, string SaveButtonText, bool SelectAll)
 {
     public static ClipEditorOptions NewRecordedClip(string appName, string length) => new(
@@ -17,12 +17,12 @@ public sealed record ClipEditorOptions(string Title, string Description, string 
         "Add to soundboard",
         SelectAll: false);
 
-    public static ClipEditorOptions Trim(string name) => new(
-        $"Trim \"{name}\"",
-        "Drag across the waveform to select the part to keep, then click \"Save trimmed clip\". You can rename it here too. " +
-        "Your original file is never changed: the trimmed version is saved as a new clip.",
+    public static ClipEditorOptions Edit(string name) => new(
+        $"Edit \"{name}\"",
+        "Drag across the waveform to select the part to keep, and add effects if you like. " +
+        "Your original file is never changed: the edited version is saved as a new clip.",
         name,
-        "Save trimmed clip",
+        "Save changes",
         SelectAll: true);
 }
 
@@ -33,6 +33,8 @@ public partial class ClipEditorWindow : Window
     private const double MinClip = 0.1;
 
     private readonly float[] _samples;
+    private EffectSettings _fx = EffectSettings.None;
+    private bool _loadingFx;
     private readonly int _sampleRate;
     private readonly int _channels;
     private readonly AudioEngine _engine;
@@ -58,6 +60,7 @@ public partial class ClipEditorWindow : Window
         Waveform.SetAudio(samples, sampleRate, channels);
         if (options.SelectAll) Waveform.SetSelection(0, Waveform.Duration);
         else SelectLast(VoteBotDefaultMax);
+        UpdateEffectLabels();
     }
 
     private double Length => Waveform.SelectionEnd - Waveform.SelectionStart;
@@ -65,10 +68,14 @@ public partial class ClipEditorWindow : Window
     private void SelectLast(double seconds) =>
         Waveform.SetSelection(Math.Max(0, Waveform.Duration - seconds), Waveform.Duration);
 
+    /// <summary>How long the saved clip will be: effects like pitch, reverb and echo change it.</summary>
+    private double OutputLength => Length < MinClip ? Length : _fx.OutputSeconds(Length);
+
     private void UpdateSelectionText()
     {
-        SelectionText.Text = $"Selected {Waveform.SelectionStart:0.00} s – {Waveform.SelectionEnd:0.00} s  ({Length:0.00} s)";
-        FitText.Text = Length switch
+        SelectionText.Text = $"Selected {Waveform.SelectionStart:0.00} s – {Waveform.SelectionEnd:0.00} s  ({Length:0.00} s)" +
+            (_fx.IsNone ? "" : $"  →  {OutputLength:0.00} s with effects");
+        FitText.Text = OutputLength switch
         {
             < MinClip => "Drag across the waveform to choose a clip.",
             <= VoteBotDefaultMax => "✓ Fits the vote bot (4 s by default) and Discord's soundboard (5.2 s).",
@@ -77,8 +84,53 @@ public partial class ClipEditorWindow : Window
         };
     }
 
-    private ISampleProvider Selection() =>
-        ClipExport.Segment(_samples, _sampleRate, _channels, Waveform.SelectionStart, Waveform.SelectionEnd);
+    /// <summary>The selected audio with the effects applied, ready to preview or save.</summary>
+    private ISampleProvider Selection()
+    {
+        var slice = ClipExport.Slice(_samples, _sampleRate, _channels, Waveform.SelectionStart, Waveform.SelectionEnd);
+        return ClipExport.FromArray(Effects.Apply(slice, _sampleRate, _channels, _fx), _sampleRate, _channels);
+    }
+
+    // ---- Effects ----
+
+    private void Effect_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_loadingFx || !IsLoaded) return;
+        _fx = new EffectSettings(
+            VolumeDb: VolumeSlider.Value,
+            BassDb: BassSlider.Value,
+            PitchSemitones: PitchSlider.Value,
+            Reverb: ReverbSlider.Value / 100,
+            Echo: EchoSlider.Value / 100,
+            Distortion: DistortionSlider.Value / 100);
+        StopPreview(); // The preview was made with the old settings.
+        UpdateEffectLabels();
+        UpdateSelectionText();
+    }
+
+    private void ResetEffects_Click(object sender, RoutedEventArgs e)
+    {
+        _loadingFx = true;
+        VolumeSlider.Value = BassSlider.Value = PitchSlider.Value = ReverbSlider.Value = EchoSlider.Value = DistortionSlider.Value = 0;
+        _loadingFx = false;
+        _fx = EffectSettings.None;
+        StopPreview();
+        UpdateEffectLabels();
+        UpdateSelectionText();
+    }
+
+    private void UpdateEffectLabels()
+    {
+        VolumeValue.Text = _fx.VolumeDb == 0 ? "0 dB" : $"{_fx.VolumeDb:+0;-0} dB";
+        BassValue.Text = _fx.BassDb == 0 ? "Off" : $"+{_fx.BassDb:0} dB";
+        PitchValue.Text = _fx.PitchSemitones == 0 ? "Normal" : $"{_fx.PitchSemitones:+0;-0} st";
+        ReverbValue.Text = Percent(_fx.Reverb);
+        EchoValue.Text = Percent(_fx.Echo);
+        DistortionValue.Text = Percent(_fx.Distortion);
+        ResetEffectsButton.IsEnabled = !_fx.IsNone;
+
+        static string Percent(double amount) => amount == 0 ? "Off" : $"{amount * 100:0}%";
+    }
 
     private bool HasSelection()
     {
@@ -108,6 +160,19 @@ public partial class ClipEditorWindow : Window
     private void SelectLast_Click(object sender, RoutedEventArgs e) => SelectLast(VoteBotDefaultMax);
 
     private void SelectAll_Click(object sender, RoutedEventArgs e) => Waveform.SetSelection(0, Waveform.Duration);
+
+    /// <summary>
+    /// Flips the audio so it plays backwards. The selection is mirrored too, so it still covers the same
+    /// moment, now played backwards. Preview and save use whichever way round it is.
+    /// </summary>
+    private void Reverse_Changed(object sender, RoutedEventArgs e)
+    {
+        StopPreview();
+        var (start, end) = (Waveform.SelectionStart, Waveform.SelectionEnd);
+        ClipExport.Reverse(_samples, _channels);
+        Waveform.SetAudio(_samples, _sampleRate, _channels);
+        Waveform.SetSelection(Waveform.Duration - end, Waveform.Duration - start);
+    }
 
     private void SaveMp3_Click(object sender, RoutedEventArgs e)
     {

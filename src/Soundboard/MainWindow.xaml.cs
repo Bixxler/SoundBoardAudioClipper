@@ -426,6 +426,39 @@ public partial class MainWindow : Window
         ShowStatus($"Renamed \"{oldName}\" to \"{sound.Name}\".");
     }
 
+    /// <summary>Adds a backwards copy of the sound as a new pad next to it. The original isn't touched.</summary>
+    private async void ReversePad_Click(object sender, RoutedEventArgs e)
+    {
+        if (SoundOf(sender) is not { } sound || ExistingFile(sound) is not { } file) return;
+
+        var name = $"{sound.Name} (reversed)";
+        ShowStatus($"Reversing \"{sound.Name}\"…");
+        try
+        {
+            var path = await Task.Run(() =>
+            {
+                var (samples, sampleRate, channels) = ClipExport.Load(file, MaxTrimLength);
+                ClipExport.Reverse(samples, channels);
+                Directory.CreateDirectory(AppSettings.ClipsFolder);
+                var target = FileNames.Unique(AppSettings.ClipsFolder, FileNames.Safe(name), ".mp3");
+                var duration = samples.Length / (double)channels / sampleRate;
+                ClipExport.SaveMp3(ClipExport.Segment(samples, sampleRate, channels, 0, duration), target);
+                return target;
+            });
+
+            var index = _sounds.IndexOf(sound);
+            var reversed = new SoundItem { Name = name, Path = path };
+            if (index >= 0) _sounds.Insert(index + 1, reversed);
+            else _sounds.Add(reversed);
+            Save();
+            ShowStatus($"Added \"{name}\".");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Couldn't reverse \"{sound.Name}\": {ex.Message}");
+        }
+    }
+
     private void TrimPad_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not SoundItem sound) return;
@@ -438,11 +471,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowStatus($"Couldn't open \"{sound.Name}\" for trimming: {ex.Message}");
+            ShowStatus($"Couldn't open \"{sound.Name}\" for editing: {ex.Message}");
             return;
         }
 
-        new ClipEditorWindow(samples, sampleRate, channels, _engine, ClipEditorOptions.Trim(sound.Name),
+        new ClipEditorWindow(samples, sampleRate, channels, _engine, ClipEditorOptions.Edit(sound.Name),
             (name, path) => ReplaceWithTrimmed(sound, name, path)) { Owner = this }.ShowDialog();
     }
 
@@ -693,7 +726,7 @@ public partial class MainWindow : Window
 
     private void SaveClip_Click(object sender, RoutedEventArgs e)
     {
-        var appName = _recorder.CapturedApps is { Count: > 0 } apps ? JoinNames(apps.Select(a => a.DisplayName).ToList()) : "recorded";
+        var appName = _recorder.RecordedApps is { Count: > 0 } apps ? JoinNames(apps.Select(a => a.DisplayName).ToList()) : "recorded";
         var length = ClipRecorder.Format(_recorder.BufferLength);
         var samples = _recorder.Snapshot();
         if (samples.Length == 0)

@@ -14,7 +14,7 @@ public static class ClipExport
         using var reader = new AudioFileReader(path);
         if (reader.TotalTime > maxLength)
             throw new InvalidOperationException(
-                $"It's {reader.TotalTime:m\\:ss} long. Trimming works on files up to {maxLength.TotalMinutes:0} minutes.");
+                $"It's {reader.TotalTime:m\\:ss} long. Editing works on files up to {maxLength.TotalMinutes:0} minutes.");
 
         var format = reader.WaveFormat;
         var samples = new List<float>((int)Math.Min(reader.Length / 4, int.MaxValue));
@@ -24,6 +24,33 @@ public static class ClipExport
             samples.AddRange(buffer.AsSpan(0, read));
         return (samples.ToArray(), format.SampleRate, format.Channels);
     }
+
+    /// <summary>
+    /// Reverses interleaved audio in place, frame by frame, so left and right stay on their own sides.
+    /// Running it twice gives back the original.
+    /// </summary>
+    public static void Reverse(float[] samples, int channels)
+    {
+        var frames = samples.Length / channels;
+        for (int a = 0, b = frames - 1; a < b; a++, b--)
+        {
+            for (var c = 0; c < channels; c++)
+                (samples[a * channels + c], samples[b * channels + c]) = (samples[b * channels + c], samples[a * channels + c]);
+        }
+    }
+
+    /// <summary>A copy of part of an interleaved buffer, from <paramref name="startSeconds"/> to <paramref name="endSeconds"/>.</summary>
+    public static float[] Slice(float[] samples, int sampleRate, int channels, double startSeconds, double endSeconds)
+    {
+        var totalFrames = samples.Length / channels;
+        var first = Math.Clamp((int)(startSeconds * sampleRate), 0, totalFrames);
+        var last = Math.Clamp((int)(endSeconds * sampleRate), first, totalFrames);
+        return samples[(first * channels)..(last * channels)];
+    }
+
+    /// <summary>A playable source for a whole interleaved buffer.</summary>
+    public static ISampleProvider FromArray(float[] samples, int sampleRate, int channels) =>
+        new ArraySampleProvider(samples, 0, samples.Length, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));
 
     /// <summary>A playable source for part of an interleaved buffer.</summary>
     public static ISampleProvider Segment(float[] samples, int sampleRate, int channels, double startSeconds, double endSeconds)
