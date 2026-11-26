@@ -11,7 +11,7 @@ namespace Soundboard;
 
 public partial class MainWindow : Window
 {
-    private static readonly string[] AudioExtensions = [".mp3", ".wav", ".aiff", ".aif", ".wma", ".m4a"];
+    private static readonly string[] AudioExtensions = AudioFiles.Extensions;
 
     private const string AppTitle = "Soundboard";
 
@@ -46,6 +46,9 @@ public partial class MainWindow : Window
         VirtualMicVolume.Value = _settings.VirtualMicVolume;
         _engine.MonitorVolume = _settings.MonitorVolume;
         _engine.VirtualMicVolume = _settings.VirtualMicVolume;
+        MicBoost.Value = _settings.MicBoostDb;
+        _engine.MicGain = DbToGain(_settings.MicBoostDb);
+        UpdateMicBoostText();
 
         if (_settings.FirstRun)
         {
@@ -230,6 +233,19 @@ public partial class MainWindow : Window
         if (_loading) return;
         _engine.VirtualMicVolume = _settings.VirtualMicVolume = (float)e.NewValue;
     }
+
+    private void MicBoost_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (MicBoostText is null) return; // Fires during InitializeComponent.
+        UpdateMicBoostText();
+        if (_loading) return;
+        _settings.MicBoostDb = e.NewValue;
+        _engine.MicGain = DbToGain(e.NewValue);
+    }
+
+    private void UpdateMicBoostText() => MicBoostText.Text = MicBoost.Value == 0 ? "Off" : $"+{MicBoost.Value:0} dB";
+
+    private static float DbToGain(double db) => (float)Math.Pow(10, db / 20);
 
     // ---- Sounds ----
 
@@ -476,26 +492,18 @@ public partial class MainWindow : Window
         }
 
         new ClipEditorWindow(samples, sampleRate, channels, _engine, ClipEditorOptions.Edit(sound.Name),
-            (name, path) => ReplaceWithTrimmed(sound, name, path)) { Owner = this }.ShowDialog();
+            (name, path) => AddEditedCopy(sound, name, path)) { Owner = this }.ShowDialog();
     }
 
-    private void ReplaceWithTrimmed(SoundItem sound, string name, string trimmedPath)
+    /// <summary>Adds the edited version as a new pad right after the original. The original pad and file are kept.</summary>
+    private void AddEditedCopy(SoundItem original, string name, string editedPath)
     {
-        var oldPath = sound.Path;
-        sound.Name = name;
-        sound.Path = trimmedPath;
+        var index = _sounds.IndexOf(original);
+        var edited = new SoundItem { Name = name, Path = editedPath };
+        if (index >= 0) _sounds.Insert(index + 1, edited);
+        else _sounds.Add(edited);
         Save();
-
-        // The app's own clips are replaced; the user's own files are never touched.
-        var note = ". Your original file was left unchanged.";
-        if (AppSettings.IsAppClip(oldPath))
-        {
-            note = "";
-            try { File.Delete(oldPath); }
-            catch (IOException) { } // Still playing. The old copy just stays in the Clips folder.
-            catch (UnauthorizedAccessException) { }
-        }
-        ShowStatus($"Trimmed \"{name}\"{note}");
+        ShowStatus($"Added \"{name}\" next to \"{original.Name}\". The original is unchanged.");
     }
 
     private void AddSounds_Click(object sender, RoutedEventArgs e)

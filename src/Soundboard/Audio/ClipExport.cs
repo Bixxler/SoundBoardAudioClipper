@@ -11,13 +11,14 @@ public static class ClipExport
     /// <summary>Decodes a whole audio file into memory so it can be trimmed. Rejects very long files.</summary>
     public static (float[] Samples, int SampleRate, int Channels) Load(string path, TimeSpan maxLength)
     {
-        using var reader = new AudioFileReader(path);
-        if (reader.TotalTime > maxLength)
+        using var audio = AudioFiles.Open(path);
+        if (audio.TotalTime > maxLength)
             throw new InvalidOperationException(
-                $"It's {reader.TotalTime:m\\:ss} long. Editing works on files up to {maxLength.TotalMinutes:0} minutes.");
+                $"It's {audio.TotalTime:m\\:ss} long. Editing works on files up to {maxLength.TotalMinutes:0} minutes.");
 
+        var reader = audio.Samples;
         var format = reader.WaveFormat;
-        var samples = new List<float>((int)Math.Min(reader.Length / 4, int.MaxValue));
+        var samples = new List<float>((int)Math.Min(audio.TotalTime.TotalSeconds * format.SampleRate * format.Channels + 1, int.MaxValue));
         var buffer = new float[format.SampleRate * format.Channels];
         int read;
         while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)

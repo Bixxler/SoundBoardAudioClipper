@@ -30,20 +30,29 @@ your mic ───────────────┘ (passthrough)
    - **Your mic (passthrough)** → your real microphone
 3. In Discord, open **Settings → Voice & Video → Input Device** and choose `CABLE Output (VB-Audio Virtual Cable)`.
    In Zoom, open **Settings → Audio → Microphone** and choose the same device.
-4. Turn off Discord's noise suppression (Krisp) and set Input Sensitivity to manual, or it may cut out sound effects.
+4. In Discord's **Voice & Video** settings, turn off the processing that's built for voices only. Otherwise Discord
+   cuts out quiet sounds and fades out long ones (music, sustained notes, ambience):
+   - **Noise Suppression**: None (not Krisp or Standard). This is the main cause of long sounds fading out.
+   - **Echo Cancellation**: off.
+   - **Automatic Gain Control**: off.
+   - **Input Sensitivity**: turn off "Automatically determine input sensitivity" and drag the threshold low, or use
+     Push to Talk. This is what cuts out quiet sounds.
 
 The two volume sliders are separate: one sets what you hear, the other what others hear. Mic passthrough is not affected by the slider.
 
+If your mic is quiet, raise **Boost** under the mic meter (up to +24 dB). The meter shows the boosted level, which
+is what Discord gets. Loud peaks are rounded off rather than clipped.
+
 ## Using it
 
-- Add sounds with **Add sounds…** or by dragging files onto the window (mp3, wav, aiff, wma, m4a).
+- Add sounds with **Add sounds…** or by dragging files onto the window (mp3, wav, ogg, opus, m4a, aiff, wma). Ogg
+  files can be Vorbis or Opus, so Discord voice messages work too.
 - Click a pad to play it. Sounds can overlap. **Stop all** stops every sound but not your mic.
 - Right-click a pad to:
   - **Rename…** it;
-  - **Edit…** it: trim it, reverse it or add effects (see [Editing clips](#editing-clips)), and optionally rename it.
-    Editing never changes your own files: the edited version is saved as a new MP3 in `%APPDATA%\Soundboard\Clips`
-    and the pad switches to it. For clips the app made itself, the old version is replaced. Files up to 10 minutes
-    long can be edited;
+  - **Edit…** it: trim it, reverse it or add effects (see [Editing clips](#editing-clips)). **Save as new sound**
+    adds the edited version as a new pad next to the original, saved as an MP3 in `%APPDATA%\Soundboard\Clips`. The
+    original pad and its file are never changed. Files up to 10 minutes long can be edited;
   - **Make reversed copy**: adds a backwards version as a new pad next to it, saved in `%APPDATA%\Soundboard\Clips`.
     The original isn't changed;
   - **Remove** it.
@@ -83,11 +92,14 @@ Settings and the sound list are saved to `%APPDATA%\Soundboard\settings.json`. S
    - **Add to soundboard**: saves an MP3 to `%APPDATA%\Soundboard\Clips` and adds it as a pad; or
    - **Save MP3…**: save it anywhere, for example to submit to the vote bot with `/sound submit`.
 
-The editor tells you whether the selection fits the vote bot (4 s by default) and Discord's soundboard (5.2 s).
-
 ### Editing clips
 
 The clip editor opens for new clips and when you choose **Edit…** on a pad.
+
+- A **green line** along the top of the waveform marks where someone is talking or singing (nothing shows if there's no
+  voice). Click a green segment to select that phrase. It's found by loudness and pitch, not speech recognition, so humming, whistling and tonal
+  music can be marked too.
+- While a preview plays, a **red line** moves across the waveform to show where you are in it.
 
 - **Reverse** plays the clip backwards. Click it again to undo. The selection follows, so it still covers the same
   moment.
@@ -103,7 +115,7 @@ The clip editor opens for new clips and when you choose **Edit…** on a pad.
   | Distortion | Crunchy, overdriven sound. |
 
   **Reset** turns them all off. Pitch, reverb and echo change the clip's length; the editor shows the length with
-  effects, and checks *that* against Discord's 5.2 s soundboard limit.
+  effects.
 
 **Consent:** clips contain other people's voices. Tell people in the call when the recorder is on, and only clip
 people who agree. Recording people without consent breaks Discord's rules and is illegal in many places.
@@ -155,6 +167,7 @@ dotnet run --project src/Soundboard
 | `Audio/ClipRecorder.cs` | One capture per ticked app, started and stopped as apps come and go |
 | `Audio/MixBuffer.cs` | Ring buffer that mixes the captures on one shared timeline (30 s to 2 min) |
 | `Audio/ClipExport.cs` | Cuts a selection, reverses it, and encodes it to MP3 (Windows Media Foundation) |
+| `Audio/VoiceDetector.cs` | Finds the parts of a clip with voice (loudness plus pitch), for the editor's green line |
 | `Audio/Effects.cs` | Volume, bass boost, pitch, reverb, echo and distortion, applied to a whole clip at once |
 | `ClipEditorWindow.xaml(.cs)`, `WaveformView.cs` | Waveform, drag to select, preview, save |
 | `Setup/VbCableInstaller.cs` | Downloads, extracts and runs the VB-Cable installer |
@@ -168,4 +181,4 @@ dotnet run --project src/Soundboard
 - Passthrough adds roughly 50–100 ms of delay to your voice. That's fine for calls but noticeable if you monitor yourself.
 - Choosing the same device for both outputs plays every sound twice on it.
 - Clips are one mixed track of the ticked apps. Once recorded, apps can't be separated out of a clip. Speakers aren't separated.
-- Not included yet: global hotkeys, per-sound volume, looping, ogg/flac files.
+- Not included yet: global hotkeys, per-sound volume, looping, flac files.

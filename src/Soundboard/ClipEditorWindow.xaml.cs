@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using NAudio.Wave;
 using Soundboard.Audio;
@@ -20,16 +21,15 @@ public sealed record ClipEditorOptions(string Title, string Description, string 
     public static ClipEditorOptions Edit(string name) => new(
         $"Edit \"{name}\"",
         "Drag across the waveform to select the part to keep, and add effects if you like. " +
-        "Your original file is never changed: the edited version is saved as a new clip.",
-        name,
-        "Save changes",
+        "The edited version is added as a new sound next to the original, which stays as it is.",
+        $"{name} (edited)",
+        "Save as new sound",
         SelectAll: true);
 }
 
 public partial class ClipEditorWindow : Window
 {
-    private const double DiscordSoundboardMax = 5.2;
-    private const double VoteBotDefaultMax = 4.0;
+    private const double DefaultClipSeconds = 4.0;
     private const double MinClip = 0.1;
 
     private readonly float[] _samples;
@@ -40,6 +40,14 @@ public partial class ClipEditorWindow : Window
     private readonly AudioEngine _engine;
     private readonly Action<string, string> _onSave;
     private IDisposable? _preview;
+
+    // Playhead: how far the preview has got, mapped back onto the waveform.
+    private const double OutputLatencySeconds = 0.05;
+    private readonly DispatcherTimer _playheadTimer;
+    private CountingSampleProvider? _playing;
+    private double _playFrom, _playTo, _playSpeed = 1;
+
+    private readonly CancellationTokenSource _closing = new();
 
     /// <param name="onSave">Called with (name, path of the new MP3 in the Clips folder) after the primary button saves.</param>
     public ClipEditorWindow(float[] samples, int sampleRate, int channels, AudioEngine engine,
@@ -59,8 +67,32 @@ public partial class ClipEditorWindow : Window
         Waveform.SelectionChanged += (_, _) => UpdateSelectionText();
         Waveform.SetAudio(samples, sampleRate, channels);
         if (options.SelectAll) Waveform.SetSelection(0, Waveform.Duration);
-        else SelectLast(VoteBotDefaultMax);
+        else SelectLast(DefaultClipSeconds);
         UpdateEffectLabels();
+
+        _playheadTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher) { Interval = TimeSpan.FromMilliseconds(30) };
+        _playheadTimer.Tick += (_, _) => UpdatePlayhead();
+        _ = FindVoiceAsync();
+    }
+
+    /// <summary>Marks where there's voice. Runs in the background; Reverse waits for it because it flips the audio in place.</summary>
+    private async Task FindVoiceAsync()
+    {
+        ReverseToggle.IsEnabled = false;
+        try
+        {
+            var ranges = await Task.Run(() => VoiceDetector.Detect(_samples, _sampleRate, _channels, _closing.Token));
+            Waveform.Voice = ranges;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"Voice detection failed: {ex.Message}");
+        }
+        ReverseToggle.IsEnabled = true;
     }
 
     private double Length => Waveform.SelectionEnd - Waveform.SelectionStart;
@@ -75,13 +107,6 @@ public partial class ClipEditorWindow : Window
     {
         SelectionText.Text = $"Selected {Waveform.SelectionStart:0.00} s – {Waveform.SelectionEnd:0.00} s  ({Length:0.00} s)" +
             (_fx.IsNone ? "" : $"  →  {OutputLength:0.00} s with effects");
-        FitText.Text = OutputLength switch
-        {
-            < MinClip => "Drag across the waveform to choose a clip.",
-            <= VoteBotDefaultMax => "✓ Fits the vote bot (4 s by default) and Discord's soundboard (5.2 s).",
-            <= DiscordSoundboardMax => "✓ Fits Discord's soundboard (5.2 s), but it's longer than the vote bot's 4 s default.",
-            _ => "Too long for Discord's soundboard (5.2 s max). It's still fine as a pad in this app.",
-        };
     }
 
     /// <summary>The selected audio with the effects applied, ready to preview or save.</summary>
@@ -143,10 +168,41 @@ public partial class ClipEditorWindow : Window
     {
         if (!HasSelection()) return;
         StopPreview();
-        _preview = _engine.Preview(Selection());
+        var selection = new CountingSampleProvider(Selection());
+        _preview = _engine.Preview(selection);
         if (_preview is null)
+        {
             MessageBox.Show(this, "Choose a device under \"You hear it on\" to preview clips.", Title,
                 MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        (_playing, _playFrom, _playTo, _playSpeed) = (selection, Waveform.SelectionStart, Waveform.SelectionEnd, _fx.Speed);
+        Waveform.Playhead = _playFrom;
+        _playheadTimer.Start();
+    }
+
+    /// <summary>
+    /// Moves the playhead. Pitch changes the speed, so the time played is scaled back to the original
+    /// audio. During a reverb or echo tail it waits at the end of the selection.
+    /// </summary>
+    private void UpdatePlayhead()
+    {
+        if (_playing is null) return;
+        // Once everything has been handed to the output, give the device a moment to play it, then hide the line.
+        if (_playing.FinishedFor > TimeSpan.FromSeconds(OutputLatencySeconds * 2))
+        {
+            StopPlayhead();
+            return;
+        }
+        var heard = Math.Max(0, _playing.Seconds - OutputLatencySeconds);
+        Waveform.Playhead = Math.Min(_playTo, _playFrom + heard * _playSpeed);
+    }
+
+    private void StopPlayhead()
+    {
+        _playheadTimer.Stop();
+        _playing = null;
+        Waveform.Playhead = null;
     }
 
     private void Stop_Click(object sender, RoutedEventArgs e) => StopPreview();
@@ -155,9 +211,10 @@ public partial class ClipEditorWindow : Window
     {
         _preview?.Dispose();
         _preview = null;
+        StopPlayhead();
     }
 
-    private void SelectLast_Click(object sender, RoutedEventArgs e) => SelectLast(VoteBotDefaultMax);
+    private void SelectLast_Click(object sender, RoutedEventArgs e) => SelectLast(DefaultClipSeconds);
 
     private void SelectAll_Click(object sender, RoutedEventArgs e) => Waveform.SetSelection(0, Waveform.Duration);
 
@@ -170,8 +227,10 @@ public partial class ClipEditorWindow : Window
         StopPreview();
         var (start, end) = (Waveform.SelectionStart, Waveform.SelectionEnd);
         ClipExport.Reverse(_samples, _channels);
+        var duration = Waveform.Duration;
         Waveform.SetAudio(_samples, _sampleRate, _channels);
-        Waveform.SetSelection(Waveform.Duration - end, Waveform.Duration - start);
+        Waveform.Voice = Waveform.Voice.Reverse().Select(r => new TimeRange(duration - r.End, duration - r.Start)).ToList();
+        Waveform.SetSelection(duration - end, duration - start);
     }
 
     private void SaveMp3_Click(object sender, RoutedEventArgs e)
@@ -216,5 +275,29 @@ public partial class ClipEditorWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
-    private void Window_Closed(object? sender, EventArgs e) => StopPreview();
+    private void Window_Closed(object? sender, EventArgs e)
+    {
+        _closing.Cancel();
+        StopPreview();
+    }
+
+    /// <summary>Passes audio through unchanged, counting how much has been played.</summary>
+    private sealed class CountingSampleProvider(ISampleProvider source) : ISampleProvider
+    {
+        private long _samples;
+        private long _finishedAt; // Environment.TickCount64 when the source ran out, 0 while playing.
+
+        public WaveFormat WaveFormat => source.WaveFormat;
+        public double Seconds => Interlocked.Read(ref _samples) / (double)WaveFormat.Channels / WaveFormat.SampleRate;
+        public bool Finished => Interlocked.Read(ref _finishedAt) != 0;
+        public TimeSpan FinishedFor => Finished ? TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _finishedAt)) : TimeSpan.Zero;
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            var read = source.Read(buffer, offset, count);
+            Interlocked.Add(ref _samples, read);
+            if (read < count && !Finished) Interlocked.Exchange(ref _finishedAt, Environment.TickCount64);
+            return read;
+        }
+    }
 }

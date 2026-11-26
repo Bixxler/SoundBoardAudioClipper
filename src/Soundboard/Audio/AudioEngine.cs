@@ -43,6 +43,15 @@ public sealed class AudioEngine : IDisposable
         set { _monitorVolume = value; if (_monitor != null) _monitor.Volume = value; }
     }
 
+    /// <summary>Boost for the mic passthrough (1 = unchanged). Kept across mic and device changes.</summary>
+    public float MicGain
+    {
+        get => _micGain;
+        set { _micGain = value; if (_passthrough != null) _passthrough.Gain = value; }
+    }
+
+    private float _micGain = 1f;
+
     public float VirtualMicVolume
     {
         get => _virtualMicVolume;
@@ -102,7 +111,7 @@ public sealed class AudioEngine : IDisposable
         // The passthrough's buffer can feed only one mixer, so it is rebuilt whenever the
         // virtual-mic bus is replaced.
         var micId = _microphoneId;
-        var passthrough = new MicPassthrough(() => OpenCapture(micId), _virtualMic.Format);
+        var passthrough = new MicPassthrough(() => OpenCapture(micId), _virtualMic.Format) { Gain = _micGain };
         passthrough.StatusChanged += message => MicStatusChanged?.Invoke(this, message);
         _virtualMic.AddPersistentInput(passthrough.Output);
         _passthrough = passthrough;

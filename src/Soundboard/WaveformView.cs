@@ -2,10 +2,14 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using Soundboard.Audio;
 
 namespace Soundboard;
 
-/// <summary>Draws a waveform. Dragging across it selects a time range, in seconds.</summary>
+/// <summary>
+/// Draws a waveform. Dragging across it selects a time range, in seconds. A green line along the top marks
+/// where there's voice; clicking it selects that phrase. A white line shows where a preview is playing.
+/// </summary>
 public sealed class WaveformView : FrameworkElement
 {
     private static readonly Brush Background = Freeze(new SolidColorBrush(Color.FromRgb(0x16, 0x17, 0x1B)));
@@ -13,12 +17,21 @@ public sealed class WaveformView : FrameworkElement
     private static readonly Brush SelectionFill = Freeze(new SolidColorBrush(Color.FromArgb(0x55, 0xF2, 0xB8, 0x4B)));
     private static readonly Pen SelectionEdge = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromRgb(0xF2, 0xB8, 0x4B))), 1.5));
     private static readonly Brush LabelBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x7C, 0x7E, 0x8A)));
+    private static readonly Brush VoiceBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x5B, 0xD0, 0x8A)));
+    private static readonly Brush VoiceTint = Freeze(new SolidColorBrush(Color.FromArgb(0x1A, 0x5B, 0xD0, 0x8A)));
+    private static readonly Brush PlayheadBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0x3B, 0x3B)));
+    private static readonly Pen PlayheadPen = Freeze(new Pen(PlayheadBrush, 2));
+
+    /// <summary>Clicks this close to the top hit the voice line instead of starting a selection.</summary>
+    private const double VoiceLaneHeight = 14;
 
     private float[] _samples = [];
     private int _channels = 2;
     private int _sampleRate = 48000;
     private float[]? _peaks;
     private double _dragAnchor;
+    private IReadOnlyList<TimeRange> _voice = [];
+    private double? _playhead;
 
     public double Duration => _samples.Length / (double)_channels / _sampleRate;
     public double SelectionStart { get; private set; }
@@ -38,6 +51,20 @@ public sealed class WaveformView : FrameworkElement
         _channels = channels;
         _peaks = null;
         InvalidateVisual();
+    }
+
+    /// <summary>Where there's voice, shown as the green line. Empty hides it.</summary>
+    public IReadOnlyList<TimeRange> Voice
+    {
+        get => _voice;
+        set { _voice = value; InvalidateVisual(); }
+    }
+
+    /// <summary>The preview's position in seconds, or null when nothing is playing.</summary>
+    public double? Playhead
+    {
+        get => _playhead;
+        set { if (_playhead == value) return; _playhead = value; InvalidateVisual(); }
     }
 
     public void SetSelection(double start, double end)
@@ -62,6 +89,14 @@ public sealed class WaveformView : FrameworkElement
         var columns = (int)w;
         if (_peaks is null || _peaks.Length != columns) _peaks = ComputePeaks(columns);
 
+        foreach (var range in _voice)
+        {
+            var (vx1, vx2) = (range.Start / Duration * w, range.End / Duration * w);
+            var width = Math.Max(2, vx2 - vx1);
+            dc.DrawRectangle(VoiceTint, null, new Rect(vx1, 0, width, h));
+            dc.DrawRoundedRectangle(VoiceBrush, null, new Rect(vx1, 4, width, 4), 2, 2);
+        }
+
         var mid = h / 2;
         var geometry = new StreamGeometry();
         using (var ctx = geometry.Open())
@@ -83,6 +118,22 @@ public sealed class WaveformView : FrameworkElement
             dc.DrawRectangle(SelectionFill, null, new Rect(x1, 0, x2 - x1, h));
             dc.DrawLine(SelectionEdge, new Point(x1, 0), new Point(x1, h));
             dc.DrawLine(SelectionEdge, new Point(x2, 0), new Point(x2, h));
+        }
+
+        if (_playhead is { } at && at >= 0 && at <= Duration)
+        {
+            var px = at / Duration * w;
+            dc.DrawLine(PlayheadPen, new Point(px, 0), new Point(px, h));
+            // A small handle at the top so the line stands out against a busy waveform.
+            var handle = new StreamGeometry();
+            using (var ctx = handle.Open())
+            {
+                ctx.BeginFigure(new Point(px - 6, 0), true, true);
+                ctx.LineTo(new Point(px + 6, 0), true, false);
+                ctx.LineTo(new Point(px, 8), true, false);
+            }
+            handle.Freeze();
+            dc.DrawGeometry(PlayheadBrush, null, handle);
         }
 
         DrawLabel(dc, $"−{Duration:0} s", new Point(6, h - 18));
@@ -120,6 +171,13 @@ public sealed class WaveformView : FrameworkElement
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         if (_samples.Length == 0) return;
+        var point = e.GetPosition(this);
+        if (point.Y <= VoiceLaneHeight && VoiceAt(TimeAt(point.X)) is { } phrase)
+        {
+            SetSelection(phrase.Start, phrase.End);
+            e.Handled = true;
+            return;
+        }
         CaptureMouse();
         _dragAnchor = TimeAt(e.GetPosition(this).X);
         SetSelection(_dragAnchor, _dragAnchor);
@@ -128,7 +186,18 @@ public sealed class WaveformView : FrameworkElement
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
-        if (IsMouseCaptured) SetSelection(_dragAnchor, TimeAt(e.GetPosition(this).X));
+        var point = e.GetPosition(this);
+        if (IsMouseCaptured) SetSelection(_dragAnchor, TimeAt(point.X));
+        else Cursor = point.Y <= VoiceLaneHeight && VoiceAt(TimeAt(point.X)) is not null ? Cursors.Hand : Cursors.IBeam;
+    }
+
+    /// <summary>The voice phrase at a time, allowing a few pixels either side so short phrases are easy to hit.</summary>
+    private TimeRange? VoiceAt(double seconds)
+    {
+        var slop = ActualWidth > 0 ? 4 / ActualWidth * Duration : 0;
+        foreach (var range in _voice)
+            if (seconds >= range.Start - slop && seconds <= range.End + slop) return range;
+        return null;
     }
 
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)

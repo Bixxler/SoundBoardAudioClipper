@@ -40,6 +40,9 @@ public sealed class AppSettings
     public string? MicrophoneDeviceId { get; set; }
     public float MonitorVolume { get; set; } = 1f;
     public float VirtualMicVolume { get; set; } = 1f;
+
+    /// <summary>Boost for the mic passthrough, in dB (0 to 24).</summary>
+    public double MicBoostDb { get; set; }
     public bool FirstRun { get; set; } = true;
     public bool ClipConsentAcknowledged { get; set; }
 
@@ -58,11 +61,8 @@ public sealed class AppSettings
 
     private static readonly string FilePath = System.IO.Path.Combine(AppFolder, "settings.json");
 
-    /// <summary>Where the app stores clips it creates. Files here belong to the app; files elsewhere are the user's.</summary>
+    /// <summary>Where the app stores clips it creates.</summary>
     public static readonly string ClipsFolder = System.IO.Path.Combine(AppFolder, "Clips");
-
-    public static bool IsAppClip(string path) =>
-        string.Equals(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)), ClipsFolder, StringComparison.OrdinalIgnoreCase);
 
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 

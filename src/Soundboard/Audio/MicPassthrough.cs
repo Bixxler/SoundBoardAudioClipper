@@ -55,6 +55,18 @@ public sealed class MicPassthrough : IDisposable
         get { lock (_sessionLock) return _session is { Stopped: false }; }
     }
 
+    /// <summary>
+    /// Multiplies the mic's level before it's mixed in (1 = unchanged). Peaks that a boost would push past
+    /// full scale are rounded off by a soft limiter instead of clipping harshly.
+    /// </summary>
+    public float Gain
+    {
+        get => Volatile.Read(ref _gain);
+        set => Volatile.Write(ref _gain, Math.Max(0f, value));
+    }
+
+    private float _gain = 1f;
+
     /// <summary>The loudest sample sent since the last call (0 to 1), for a level meter.</summary>
     public float TakeLevel() => Interlocked.Exchange(ref _peak, 0f);
 
@@ -151,9 +163,11 @@ public sealed class MicPassthrough : IDisposable
             }
         }
 
+        var gain = Gain;
         float peak = 0;
         for (var i = offset; i < offset + read; i++)
         {
+            if (gain != 1f) buffer[i] = SoftLimit(buffer[i] * gain);
             var v = Math.Abs(buffer[i]);
             if (v > peak) peak = v;
         }
@@ -161,6 +175,15 @@ public sealed class MicPassthrough : IDisposable
 
         Array.Clear(buffer, offset + read, count - read);
         return count;
+    }
+
+    /// <summary>Unchanged below 0.9; above it, eases towards 1 instead of clipping.</summary>
+    private static float SoftLimit(float x)
+    {
+        var a = Math.Abs(x);
+        if (a <= 0.9f) return x;
+        var limited = 0.9f + 0.1f * MathF.Tanh((a - 0.9f) / 0.1f);
+        return x < 0 ? -limited : limited;
     }
 
     public void Dispose()
@@ -189,6 +212,9 @@ public sealed class MicPassthrough : IDisposable
         private readonly BufferedWaveProvider _buffer;
         private byte[] _discard = [];
         private long _lastDataTicks = Environment.TickCount64;
+        private int _drops;
+        private double _droppedSeconds;
+        private long _lastDropReport = Environment.TickCount64;
 
         private Session(IWaveIn capture, BufferedWaveProvider buffer, ISampleProvider reader)
         {
@@ -245,6 +271,15 @@ public sealed class MicPassthrough : IDisposable
             if (drop <= 0) return;
             if (_discard.Length < drop) _discard = new byte[drop];
             _buffer.Read(_discard, 0, drop);
+
+            // Each drop is an audible skip, so keep count. If they're frequent, the cap is too tight.
+            _drops++;
+            _droppedSeconds += drop / (double)format.AverageBytesPerSecond;
+            if (Environment.TickCount64 - _lastDropReport >= 10_000)
+            {
+                Log.Write($"Mic passthrough: skipped {_droppedSeconds * 1000:0} ms of mic audio in {_drops} drop(s) to keep the delay down.");
+                (_drops, _droppedSeconds, _lastDropReport) = (0, 0, Environment.TickCount64);
+            }
         }
 
         public void Dispose()

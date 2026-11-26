@@ -19,7 +19,7 @@
         <!-- ================= Sidebar: routing and clip recorder ================= -->
         <ScrollViewer x:Name="SidebarScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <!-- Fills the visible height, so the app list can grow into it. Below MinHeight, the sidebar scrolls instead. -->
-            <Grid Margin="16,16,12,16" MinHeight="700"
+            <Grid Margin="16,16,12,16" MinHeight="740"
                   Height="{Binding ViewportHeight, ElementName=SidebarScroll, Converter={StaticResource Subtract}, ConverterParameter=32}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -78,6 +78,15 @@
                             <ProgressBar x:Name="MicLevel" Height="4" Minimum="0" Maximum="1" VerticalAlignment="Center"
                                          Foreground="#3FB950"
                                          ToolTip="Your mic level (what's being mixed into the virtual mic)" />
+                        </DockPanel>
+                        <DockPanel Margin="0,6,0,0"
+                                   ToolTip="Makes your mic louder in the virtual mic, so quiet sounds get through. Loud peaks are rounded off rather than clipped.">
+                            <TextBlock DockPanel.Dock="Left" Text="Boost" Width="44" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <TextBlock x:Name="MicBoostText" DockPanel.Dock="Right" Width="44" TextAlignment="Right" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Off" />
+                            <Slider x:Name="MicBoost" Minimum="0" Maximum="24" TickFrequency="1" IsSnapToTickEnabled="True"
+                                    VerticalAlignment="Center" ValueChanged="MicBoost_Changed" />
                         </DockPanel>
                     </StackPanel>
                 </Border>
@@ -216,7 +225,7 @@
                                Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                     <TextBlock Text="No sounds yet" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,14,0,4" />
                     <TextBlock Style="{StaticResource Hint}" FontSize="13" TextAlignment="Center"
-                               Text="Drop audio files here, or add them from your computer. MP3, WAV, AIFF, WMA and M4A work." />
+                               Text="Drop audio files here, or add them from your computer. MP3, WAV, OGG, Opus, M4A, AIFF and WMA work." />
                     <Button HorizontalAlignment="Center" Margin="0,16,0,0" Padding="16,7"
                             Style="{DynamicResource AccentButtonStyle}" Content="Add sounds…" Click="AddSounds_Click" />
                 </StackPanel>
